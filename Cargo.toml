@@ -1,0 +1,12 @@
+[package]
+name = "roguelike"
+version = "0.1.0"
+authors = ["Shadorain <shadorain7517@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+rltk = { version = "0.8.1", features = ["serde"] }
+specs = { version = "0.16.1", features = ["serde"] }
+specs-derive = "0.4.1"
+serde = { version = "1.0.126", features = ["derive"] }
+serde_json = "1.0.64"
