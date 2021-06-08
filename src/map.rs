@@ -5,7 +5,7 @@ use specs::prelude::*;
 use super::Rect;
 
 pub const MAP_WIDTH : usize  = 80;
-pub const MAP_HEIGHT : usize = 50;
+pub const MAP_HEIGHT : usize = 43;
 pub const MAP_COUNT : usize  = MAP_HEIGHT * MAP_WIDTH;
 
 #[derive(PartialEq, Copy, Clone, Serialize, Deserialize)]
@@ -101,8 +101,8 @@ impl Map {
         for _i in 0..MAX_ROOMS {
             let w = rng.range(MIN_SIZE, MAX_SIZE);
             let h = rng.range(MIN_SIZE, MAX_SIZE);
-            let x = rng.roll_dice(1, 80 - w - 1) - 1;
-            let y = rng.roll_dice(1, 50 - h - 1) - 1;
+            let x = rng.roll_dice(1, map.width - w - 1) - 1;
+            let y = rng.roll_dice(1, map.height - h - 1) - 1;
             let new_room = Rect::new(x, y, w, h);
             let mut ok = true;
             for other_room in map.rooms.iter() {
@@ -159,8 +159,8 @@ impl BaseMap for Map {
 
         /* Diagonals */
         if self.is_exit_valid(x-1, y-1) { exits.push(((idx-w)-1, 1.45)) };
-        if self.is_exit_valid(x+1, y-1) { exits.push(((idx+w)+1, 1.45)) };
-        if self.is_exit_valid(x-1, y+1) { exits.push(((idx-w)-1, 1.45)) };
+        if self.is_exit_valid(x+1, y-1) { exits.push(((idx-w)+1, 1.45)) };
+        if self.is_exit_valid(x-1, y+1) { exits.push(((idx+w)-1, 1.45)) };
         if self.is_exit_valid(x+1, y+1) { exits.push(((idx+w)+1, 1.45)) };
 
         exits
@@ -194,7 +194,7 @@ pub fn draw_map (ecs: &World, ctx : &mut Rltk) {
                     fg = RGB::from_f32(0., 1.0, 0.);
                 }, TileType::DownStairs => {
                     glyph = rltk::to_cp437('>');
-                    fg = RGB::from_f32(0., 1.0, 0.);
+                    fg = RGB::from_f32(0., 1.0, 1.0);
                 },
             }
             if !map.visible_tiles[idx] { fg = fg.to_greyscale() }

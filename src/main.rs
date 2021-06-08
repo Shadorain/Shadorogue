@@ -46,6 +46,8 @@ pub enum RunState {
     MainMenu { menu_selection : gui::MainMenuSelection },
     SaveGame,
     NextLevel,
+    ShowRemoveEquipment,
+    GameOver,
 }
 
 pub struct State {
@@ -69,6 +71,8 @@ impl State {
         let mut items = ItemUseSystem {}; items.run_now(&self.ecs);
         let mut drop_items = ItemDropSystem {};
         drop_items.run_now(&self.ecs);
+        let mut gear_remove = EquipmentRemoveSystem {};
+        gear_remove.run_now(&self.ecs);
 
         self.ecs.maintain();
     }
@@ -84,6 +88,7 @@ impl GameState for State {
 
         match newrunstate {
             RunState::MainMenu {..} => {},
+            RunState::GameOver {..} => {},
             _ => {
                 draw_map(&self.ecs, ctx);
                 {
@@ -185,6 +190,27 @@ impl GameState for State {
             } RunState::NextLevel => {
                 self.goto_next_level();
                 newrunstate = RunState::PreRun;
+            } RunState::ShowRemoveEquipment => {
+                let result = gui::remove_equipment_menu(self, ctx);
+                match result.0 {
+                    gui::ItemMenuResult::Cancel => newrunstate = RunState::AwaitingInput,
+                    gui::ItemMenuResult::NoResponse => {},
+                    gui::ItemMenuResult::Selected => {
+                        let item_entity = result.1.unwrap();
+                        let mut intent = self.ecs.write_storage::<WantsToRemoveEquipment>();
+                        intent.insert(*self.ecs.fetch::<Entity>(), WantsToRemoveEquipment { item: item_entity }).expect("Unable to insert intent");
+                        newrunstate = RunState::PlayerTurn;
+                    },
+                }
+            } RunState::GameOver => {
+                let result = gui::game_over(ctx);
+                match result {
+                    gui::GameOverResult::NoSelection => {},
+                    gui::GameOverResult::QuitToMenu => {
+                        self.game_over_cleanup();
+                        newrunstate = RunState::MainMenu { menu_selection: gui::MainMenuSelection::NewGame };
+                    },
+                }
             }
         }
         {
@@ -201,6 +227,7 @@ impl State {
         let player = self.ecs.read_storage::<Player>();
         let backpack = self.ecs.read_storage::<InBackpack>();
         let player_entity = self.ecs.fetch::<Entity>();
+        let equipped = self.ecs.read_storage::<Equipped>();
         
         let mut to_delete : Vec<Entity> = Vec::new();
         for ent in entities.join() {
@@ -215,6 +242,12 @@ impl State {
             let bp = backpack.get(ent);
             if let Some(bp) = bp {
                 if bp.owner == *player_entity {
+                    should_delete = false;
+                }
+            }
+            let eq = equipped.get(ent);
+            if let Some(eq) = eq {
+                if eq.owner == *player_entity {
                     should_delete = false;
                 }
             }
@@ -235,16 +268,17 @@ impl State {
 
         /* Build a new map and place the player */
         let worldmap;
+        let current_depth;
         {
             let mut worldmap_resource = self.ecs.write_resource::<Map>();
-            let current_depth = worldmap_resource.depth;
+            current_depth = worldmap_resource.depth;
             *worldmap_resource = Map::new_map_rooms_and_corridors(current_depth+1);
             worldmap = worldmap_resource.clone();
         }
 
         /* Spawn baddies */
         for room in worldmap.rooms.iter().skip(1) {
-            spawner::spawn_room(&mut self.ecs, room);
+            spawner::spawn_room(&mut self.ecs, room, current_depth+1);
         };
 
         /* Place player and update resources */
@@ -273,6 +307,51 @@ impl State {
         let player_health = player_health_store.get_mut(*player_entity);
         if let Some(player_health) = player_health {
             player_health.hp = i32::max(player_health.hp, player_health.max_hp/2);
+        }
+    }
+
+    fn game_over_cleanup (&mut self) {
+        /* Delete Everything */
+        let mut to_delete = Vec::new();
+        for e in self.ecs.entities().join() {
+            to_delete.push(e);
+        };
+        for del in to_delete.iter() {
+            self.ecs.delete_entity(*del).expect("Deletion failed");
+        };
+
+        /* Build new map and place player */
+        let worldmap;
+        {
+            let mut worldmap_resource = self.ecs.write_resource::<Map>();
+            *worldmap_resource = Map::new_map_rooms_and_corridors(1);
+            worldmap = worldmap_resource.clone();
+        }
+        
+        /* Spawn bad guys */
+        for room in worldmap.rooms.iter().skip(1) {
+            spawner::spawn_room(&mut self.ecs, room, 1);
+        };
+
+        /* Place player and update resources */
+        let (player_x, player_y) = worldmap.rooms[0].center();
+        let player_entity = spawner::player(&mut self.ecs, player_x, player_y);
+        let mut player_position = self.ecs.write_resource::<Point>();
+        *player_position = Point::new(player_x, player_y);
+        let mut position_components = self.ecs.write_storage::<Position>();
+        let mut player_entity_writer = self.ecs.write_resource::<Entity>();
+        *player_entity_writer = player_entity; 
+        let player_pos_comp = position_components.get_mut(player_entity);
+        if let Some(player_pos_comp) = player_pos_comp {
+            player_pos_comp.x = player_x;
+            player_pos_comp.y = player_y;
+        }
+
+        /* Mark player's visibility as dirty */
+        let mut viewshed_components = self.ecs.write_storage::<Viewshed>();
+        let vs = viewshed_components.get_mut(player_entity);
+        if let Some(vs) = vs {
+            vs.dirty = true;
         }
     }
 }
@@ -310,6 +389,11 @@ fn main () -> rltk::BError {
     gs.ecs.register::<Confusion>();
     gs.ecs.register::<SimpleMarker<SerializeMe>>();
     gs.ecs.register::<SerializationHelper>();
+    gs.ecs.register::<Equippable>();
+    gs.ecs.register::<Equipped>();
+    gs.ecs.register::<MeleePowerBonus>();
+    gs.ecs.register::<DefenseBonus>();
+    gs.ecs.register::<WantsToRemoveEquipment>();
 
     gs.ecs.insert(SimpleMarkerAllocator::<SerializeMe>::new());
 
@@ -318,13 +402,13 @@ fn main () -> rltk::BError {
     let player_entity = spawner::player(&mut gs.ecs, player_x, player_y);
     gs.ecs.insert(rltk::RandomNumberGenerator::new());
     for room in map.rooms.iter().skip(1) {
-        spawner::spawn_room(&mut gs.ecs, room);
+        spawner::spawn_room(&mut gs.ecs, room, 1);
     }
 
     gs.ecs.insert(map);
     gs.ecs.insert(Point::new(player_x, player_y));
     gs.ecs.insert(player_entity);
-    gs.ecs.insert(RunState::PreRun);
+    gs.ecs.insert(RunState::MainMenu { menu_selection: gui::MainMenuSelection::NewGame });
     gs.ecs.insert(gamelog::GameLog { entries : vec!["Welcome to Roguelike".to_string()] });
 
     rltk::main_loop(context, gs)

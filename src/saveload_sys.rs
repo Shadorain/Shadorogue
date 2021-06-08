@@ -52,7 +52,9 @@ pub fn save_game (ecs: &mut World) {
             Viewshed, Monster, Name, BlocksTile, CombatStats, SufferDamage,
             WantsToMelee, Item, Consumable, Ranged, InflictsDamage, AreaOfEffect,
             Confusion, ProvidesHealing, InBackpack, WantsToPickupItem, WantsToUseItem,
-            WantsToDropItem, SerializationHelper);
+            WantsToDropItem, SerializationHelper, Equippable, Equipped,
+            MeleePowerBonus, DefenseBonus, WantsToRemoveEquipment
+        );
     }
     /* Cleanup */
     ecs.delete_entity(savehelper).expect("Crash on cleanup");
@@ -83,7 +85,9 @@ pub fn load_game (ecs: &mut World) {
             Viewshed, Monster, Name, BlocksTile, CombatStats, SufferDamage,
             WantsToMelee, Item, Consumable, Ranged, InflictsDamage, AreaOfEffect,
             Confusion, ProvidesHealing, InBackpack, WantsToPickupItem, WantsToUseItem,
-            WantsToDropItem, SerializationHelper);
+            WantsToDropItem, SerializationHelper, Equippable, Equipped,
+            MeleePowerBonus, DefenseBonus, WantsToRemoveEquipment
+        );
     }
 
     let mut deleteme : Option<Entity> = None;

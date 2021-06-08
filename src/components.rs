@@ -130,3 +130,32 @@ pub struct Confusion {
     pub turns : i32,
 }
 
+/* Equipment */
+#[derive(PartialEq, Copy, Clone, Serialize, Deserialize)]
+pub enum EquipmentSlot { Melee, Shield }
+
+#[derive(Component, Clone, Serialize, Deserialize)]
+pub struct Equippable {
+    pub slot : EquipmentSlot,
+}
+
+#[derive(Component, Clone, ConvertSaveload)]
+pub struct Equipped {
+    pub owner : Entity,
+    pub slot : EquipmentSlot,
+}
+
+#[derive(Component, Clone, ConvertSaveload)]
+pub struct MeleePowerBonus {
+    pub power : i32,
+}
+
+#[derive(Component, Clone, ConvertSaveload)]
+pub struct DefenseBonus {
+    pub defense : i32,
+}
+
+#[derive(Component, Debug, Clone, ConvertSaveload)]
+pub struct WantsToRemoveEquipment {
+    pub item : Entity,
+}
