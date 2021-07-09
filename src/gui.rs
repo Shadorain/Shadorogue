@@ -1,7 +1,10 @@
 use rltk::{ RGB, Rltk, Point, VirtualKeyCode };
+use super::{camera};
 use specs::prelude::*;
 
-use super::{CombatStats, Player, gamelog::GameLog, Map, Name, Position, InBackpack, State, Viewshed, RunState, Equipped};
+use super::{CombatStats, Player, gamelog::GameLog, Map, Name, Position, InBackpack,
+    State, Viewshed, RunState, Equipped, HungerClock, HungerState, rex_assets::RexAssets,
+    Hidden};
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum MainMenuSelection { NewGame, LoadGame, Quit }
@@ -14,10 +17,18 @@ pub fn draw_ui (ecs: &World, ctx: &mut Rltk) {
 
     let combat_stats = ecs.read_storage::<CombatStats>();
     let players = ecs.read_storage::<Player>();
-    for (_player, stats) in (&players, &combat_stats).join() {
+    let hunger = ecs.read_storage::<HungerClock>();
+    for (_player, stats, hc) in (&players, &combat_stats, &hunger).join() {
         let health = format!(" HP: {} / {} ", stats.hp, stats.max_hp);
         ctx.print_color(12, 43, RGB::named(rltk::YELLOW), RGB::named(rltk::BLACK), &health);
         ctx.draw_bar_horizontal(28, 43, 51, stats.hp, stats.max_hp, RGB::named(rltk::RED), RGB::named(rltk::BLACK));
+
+        match hc.state {
+            HungerState::WellFed => { ctx.print_color(71, 42, RGB::named(rltk::GREEN), RGB::named(rltk::BLACK), "Well Fed"); },
+            HungerState::Normal => {},
+            HungerState::Hungry => { ctx.print_color(71, 42, RGB::named(rltk::ORANGE), RGB::named(rltk::BLACK), "Hungry"); },
+            HungerState::Starving => { ctx.print_color(71, 42, RGB::named(rltk::RED), RGB::named(rltk::BLACK), "Starving"); },
+        }
     };
 
     let map = ecs.fetch::<Map>();
@@ -38,17 +49,23 @@ pub fn draw_ui (ecs: &World, ctx: &mut Rltk) {
 }
 
 fn draw_tooltips (ecs: &World, ctx : &mut Rltk) {
+    let (min_x, _max_x, min_y, _max_y) = camera::get_screen_bounds(ecs, ctx);
     let map = ecs.fetch::<Map>();
     let names = ecs.read_storage::<Name>();
     let positions = ecs.read_storage::<Position>();
+    let hidden = ecs.read_storage::<Hidden>();
 
     let mouse_pos = ctx.mouse_pos();
-    if mouse_pos.0 >= map.width || mouse_pos.1 >= map.height { return; }
+    let mut mouse_map_pos = mouse_pos;
+    mouse_map_pos.0 += min_x;
+    mouse_map_pos.1 += min_y;
+    if mouse_map_pos.0 >= map.width-1 || mouse_map_pos.1 >= map.height-1 ||
+        mouse_map_pos.0 < 1 || mouse_map_pos.1 < 1 { return; }
+    if !map.visible_tiles[map.xy_idx(mouse_map_pos.0, mouse_map_pos.1)] { return; }
 
     let mut tooltip : Vec<String> = Vec::new();
-    for (name, pos) in (&names, &positions).join() {
-        let idx = map.xy_idx(pos.x, pos.y);
-        if pos.x == mouse_pos.0 && pos.y == mouse_pos.1 && map.visible_tiles[idx] {
+    for (name, pos,_hide) in (&names, &positions, !&hidden).join() {
+        if pos.x == mouse_map_pos.0 && pos.y == mouse_map_pos.1 {
             tooltip.push(name.name.to_string());
         }
     };
@@ -226,6 +243,7 @@ pub fn remove_equipment_menu (gs : &mut State, ctx : &mut Rltk) -> (ItemMenuResu
 }
 
 pub fn ranged_target (gs: &mut State, ctx: &mut Rltk, range:i32) -> (ItemMenuResult, Option<Point>) {
+    let (min_x, max_x, min_y, max_y) = camera::get_screen_bounds(&gs.ecs, ctx);
     let player_entity = gs.ecs.fetch::<Entity>();
     let player_pos = gs.ecs.fetch::<Point>();
     let viewsheds = gs.ecs.read_storage::<Viewshed>();
@@ -240,8 +258,12 @@ pub fn ranged_target (gs: &mut State, ctx: &mut Rltk, range:i32) -> (ItemMenuRes
         for idx in visible.visible_tiles.iter() {
             let dist = rltk::DistanceAlg::Pythagoras.distance2d(*player_pos, *idx);
             if dist <= range as f32 {
-                ctx.set_bg(idx.x, idx.y, RGB::named(rltk::BLUE));
-                available_cells.push(idx);
+                let screen_x = idx.x - min_x;
+                let screen_y = idx.y - min_y;
+                if screen_x > 1 && screen_x < (max_x - min_x)-1 && screen_y > 1 && screen_y < (max_y - min_y)-1 {
+                    ctx.set_bg(idx.x, idx.y, RGB::named(rltk::BLUE));
+                    available_cells.push(idx);
+                }
             }
         };
     } else {
@@ -250,14 +272,17 @@ pub fn ranged_target (gs: &mut State, ctx: &mut Rltk, range:i32) -> (ItemMenuRes
 
     /* Draw Mouse Cursor */
     let mouse_pos = ctx.mouse_pos();
+    let mut mouse_map_pos = mouse_pos;
+    mouse_map_pos.0 += min_x;
+    mouse_map_pos.1 += min_y;
     let mut valid_target = false;
     for idx in available_cells.iter() {
-        if idx.x == mouse_pos.0 && idx.y == mouse_pos.1 { valid_target = true; }
+        if idx.x == mouse_map_pos.0 && idx.y == mouse_map_pos.1 { valid_target = true; }
     };
     if valid_target {
         ctx.set_bg(mouse_pos.0, mouse_pos.1, RGB::named(rltk::CYAN));
         if ctx.left_click {
-            return (ItemMenuResult::Selected, Some(Point::new(mouse_pos.0, mouse_pos.1)));
+            return (ItemMenuResult::Selected, Some(Point::new(mouse_map_pos.0, mouse_map_pos.1)));
         }
     } else {
         ctx.set_bg(mouse_pos.0, mouse_pos.1, RGB::named(rltk::RED));
@@ -272,28 +297,34 @@ pub fn ranged_target (gs: &mut State, ctx: &mut Rltk, range:i32) -> (ItemMenuRes
 pub fn main_menu (gs : &mut State, ctx : &mut Rltk) -> MainMenuResult {
     let save_exists = super::saveload_sys::does_save_exist();
     let runstate = gs.ecs.fetch::<RunState>();
+    let assets = gs.ecs.fetch::<RexAssets>();
 
-    ctx.print_color_centered(15, RGB::named(rltk::YELLOW), RGB::named(rltk::BLACK), "Roguelike");
+    ctx.render_xp_sprite(&assets.menu, 0, 0);
+    ctx.print_color_centered(15, RGB::named(rltk::PINK), RGB::named(rltk::BLACK), "Shadorogue");
+    ctx.print_color_centered(16, RGB::named(rltk::CYAN), RGB::named(rltk::BLACK), "by Shadorain");
 
+    let mut y = 23;
     if let RunState::MainMenu { menu_selection : selection } = *runstate {
         if selection == MainMenuSelection::NewGame {
-            ctx.print_color_centered(24, RGB::named(rltk::MAGENTA), RGB::named(rltk::BLACK), "Begin New Game");
+            ctx.print_color_centered(y, RGB::named(rltk::MAGENTA), RGB::named(rltk::BLACK), "Begin New Game");
         } else {
-            ctx.print_color_centered(24, RGB::named(rltk::WHITE), RGB::named(rltk::BLACK), "Begin New Game");
+            ctx.print_color_centered(y, RGB::named(rltk::WHITE), RGB::named(rltk::BLACK), "Begin New Game");
         }
+        y += 1;
 
         if save_exists {
             if selection == MainMenuSelection::LoadGame {
-                ctx.print_color_centered(25, RGB::named(rltk::MAGENTA), RGB::named(rltk::BLACK), "Load Game");
+                ctx.print_color_centered(y, RGB::named(rltk::MAGENTA), RGB::named(rltk::BLACK), "Load Game");
             } else {
-                ctx.print_color_centered(25, RGB::named(rltk::WHITE), RGB::named(rltk::BLACK), "Load Game");
+                ctx.print_color_centered(y, RGB::named(rltk::WHITE), RGB::named(rltk::BLACK), "Load Game");
             }
+            y += 1;
         }
 
         if selection == MainMenuSelection::Quit {
-            ctx.print_color_centered(26, RGB::named(rltk::MAGENTA), RGB::named(rltk::BLACK), "Quit");
+            ctx.print_color_centered(y, RGB::named(rltk::MAGENTA), RGB::named(rltk::BLACK), "Quit");
         } else {
-            ctx.print_color_centered(26, RGB::named(rltk::WHITE), RGB::named(rltk::BLACK), "Quit");
+            ctx.print_color_centered(y, RGB::named(rltk::WHITE), RGB::named(rltk::BLACK), "Quit");
         }
 
         match ctx.key {

@@ -145,6 +145,11 @@ pub struct Equipped {
     pub slot : EquipmentSlot,
 }
 
+#[derive(Component, Debug, Clone, ConvertSaveload)]
+pub struct WantsToRemoveEquipment {
+    pub item : Entity,
+}
+
 #[derive(Component, Clone, ConvertSaveload)]
 pub struct MeleePowerBonus {
     pub power : i32,
@@ -155,7 +160,46 @@ pub struct DefenseBonus {
     pub defense : i32,
 }
 
-#[derive(Component, Debug, Clone, ConvertSaveload)]
-pub struct WantsToRemoveEquipment {
-    pub item : Entity,
+/* Particles */
+#[derive(Component, Clone, Serialize, Deserialize)]
+pub struct ParticleLifetime {
+    pub lifetime_ms : f32,
+}
+
+/* Hunger */
+#[derive(PartialEq, Copy, Clone, Serialize, Deserialize)]
+pub enum HungerState { WellFed, Normal, Hungry, Starving }
+
+#[derive(Component, Clone, Serialize, Deserialize)]
+pub struct HungerClock {
+    pub state : HungerState,
+    pub duration : i32,
+}
+
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct ProvidesFood {}
+
+/* Magic Mapper */
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct MagicMapper {}
+
+/* Traps */
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct Hidden {}
+
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct EntryTrigger {}
+
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct EntityMoved {}
+
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct SingleActivation {}
+
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct BlocksVisibility {}
+
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct Door {
+    pub open: bool,
 }

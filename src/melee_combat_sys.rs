@@ -1,6 +1,7 @@
 use specs::prelude::*;
 use super::{CombatStats, WantsToMelee, SufferDamage, Name, gamelog::GameLog,
-    MeleePowerBonus, DefenseBonus, Equipped};
+    MeleePowerBonus, DefenseBonus, Equipped, ParticleBuilder, Position, HungerState,
+    HungerClock};
 
 pub struct MeleeCombatSystem { }
 
@@ -15,11 +16,15 @@ impl<'a> System<'a> for MeleeCombatSystem {
         ReadStorage<'a, MeleePowerBonus>,
         ReadStorage<'a, DefenseBonus>,
         ReadStorage<'a, Equipped>,
+        WriteExpect<'a, ParticleBuilder>,
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, HungerClock>,
         );
 
     fn run (&mut self, data : Self::SystemData) {
         let (entities, mut log, mut wants_melee, names, combat_stats,
-            mut inflict_damage, melee_power_bonus, defense_bonus, equipped) = data;
+            mut inflict_damage, melee_power_bonus, defense_bonus, equipped,
+            mut particle_builder, positions, hunger_clock) = data;
 
         for (ent, wants_melee, name, stats) in (&entities, &wants_melee, &names, &combat_stats).join() {
             if stats.hp > 0 {
@@ -29,6 +34,13 @@ impl<'a> System<'a> for MeleeCombatSystem {
                         offensive_bonus += power_bonus.power;
                     }
                 };
+                let hc = hunger_clock.get(ent);
+                if let Some(hc) = hc {
+                    if hc.state == HungerState::WellFed {
+                        offensive_bonus += 1;
+                    }
+                }
+
                 let target_stats = combat_stats.get(wants_melee.target).unwrap();
                 if target_stats.hp > 0 {
                     let target_name = names.get(wants_melee.target).unwrap();
@@ -38,6 +50,11 @@ impl<'a> System<'a> for MeleeCombatSystem {
                             defensive_bonus += defense_bonus.defense;
                         }
                     };
+
+                    let pos = positions.get(wants_melee.target);
+                    if let Some(pos) = pos {
+                        particle_builder.request(pos.x, pos.y, rltk::RGB::named(rltk::ORANGE), rltk::RGB::named(rltk::BLACK), rltk::to_cp437('‼'), 200.0);
+                    }
 
                     let dmg = i32::max(0, (stats.power+offensive_bonus) - (target_stats.defense+defensive_bonus));
                     if dmg == 0 {

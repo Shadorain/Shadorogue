@@ -2,6 +2,7 @@ use specs::prelude::*;
 use super::{Map, Name, gamelog::GameLog, WantsToUseItem, ProvidesHealing, CombatStats,
     WantsToPickupItem, WantsToDropItem, Position, InBackpack, Consumable, SufferDamage,
     InflictsDamage, AreaOfEffect, Confusion, Equippable, Equipped, WantsToRemoveEquipment,
+    ParticleBuilder, ProvidesFood, HungerState, HungerClock, MagicMapper, RunState
 };
 
 pub struct ItemCollectionSystem {}
@@ -52,13 +53,20 @@ impl<'a> System<'a> for ItemUseSystem {
         ReadStorage<'a, Equippable>,
         WriteStorage<'a, Equipped>,
         WriteStorage<'a, InBackpack>,
+        WriteExpect<'a, ParticleBuilder>,
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, ProvidesFood>,
+        WriteStorage<'a, HungerClock>,
+        ReadStorage<'a, MagicMapper>,
+        WriteExpect<'a, RunState>,
         );
 
     fn run (&mut self, data : Self::SystemData) {
         let (player_entity, mut gamelog, map, entities, mut wants_use, names,
             consumables, healing, inflict_damage, mut combat_stats,
             mut suffer_damage, aoe, mut confused, equippable, mut equipped,
-            mut backpack) = data;
+            mut backpack, mut particle_builder, positions, provides_food,
+            mut hunger_clock, magic_mapper, mut runstate) = data;
         
         for (ent,useitem) in (&entities, &wants_use).join() {
             let mut used_item = true;
@@ -86,6 +94,7 @@ impl<'a> System<'a> for ItemUseSystem {
                                 for mob in map.tile_content[idx].iter() {
                                     targets.push(*mob);
                                 };
+                                particle_builder.request(tile_idx.x, tile_idx.y, rltk::RGB::named(rltk::ORANGE), rltk::RGB::named(rltk::BLACK), rltk::to_cp437('░'), 200.0);
                             };
                         },
                     }
@@ -122,6 +131,31 @@ impl<'a> System<'a> for ItemUseSystem {
                     }
                 },
             }
+            /* Magic Mapper */
+            let is_mapper = magic_mapper.get(useitem.item);
+            match is_mapper {
+                None => {},
+                Some(_) => {
+                    used_item = true;
+                    gamelog.entries.push("The map is revealed to you!".to_string());
+                    *runstate = RunState::MagicMapReveal { row: 0 };
+                },
+            }
+            /* Food!!! */
+            let item_edible = provides_food.get(useitem.item);
+            match item_edible {
+                None => {},
+                Some(_) => {
+                    used_item = true;
+                    let target = targets[0];
+                    let hc = hunger_clock.get_mut(target);
+                    if let Some(hc) = hc {
+                        hc.state = HungerState::WellFed;
+                        hc.duration = 20;
+                        gamelog.entries.push(format!("You eat the {}.", names.get(useitem.item).unwrap().name));
+                    }
+                }
+            }
             /* Healing */
             let item_heals = healing.get(useitem.item);
             match item_heals {
@@ -134,6 +168,11 @@ impl<'a> System<'a> for ItemUseSystem {
                             if ent == *player_entity {
                                 gamelog.entries.push(format!("You drank the {}, healing {} hp.",
                                         names.get(useitem.item).unwrap().name, healer.heal_amount));
+                            }
+                            used_item = true;
+                            let pos = positions.get(*target);
+                            if let Some(pos) = pos {
+                                particle_builder.request(pos.x, pos.y, rltk::RGB::named(rltk::GREEN), rltk::RGB::named(rltk::BLACK), rltk::to_cp437('♥'), 200.0);
                             }
                         }
                     };
@@ -152,6 +191,10 @@ impl<'a> System<'a> for ItemUseSystem {
                             let mob_name = names.get(*mob).unwrap();
                             gamelog.entries.push(format!("You used {} on {}, inflicting {} hp.",
                                     item_name.name, mob_name.name, damage.damage));
+                            let pos = positions.get(*mob);
+                            if let Some(pos) = pos {
+                                particle_builder.request(pos.x, pos.y, rltk::RGB::named(rltk::RED), rltk::RGB::named(rltk::BLACK), rltk::to_cp437('‼'), 200.0);
+                            }
                         }
                         used_item = true;
                     };
@@ -172,6 +215,10 @@ impl<'a> System<'a> for ItemUseSystem {
                                 let mob_name = names.get(*mob).unwrap();
                                 gamelog.entries.push(format!("You used {} on {}, inflicting confusion.",
                                         item_name.name, mob_name.name));
+                                let pos = positions.get(*mob);
+                                if let Some(pos) = pos {
+                                    particle_builder.request(pos.x, pos.y, rltk::RGB::named(rltk::MAGENTA), rltk::RGB::named(rltk::BLACK), rltk::to_cp437('?'), 200.0);
+                                }
                             }
                             used_item = true;
                         };

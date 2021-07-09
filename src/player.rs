@@ -2,7 +2,9 @@ use rltk::{Point, Rltk, VirtualKeyCode};
 use specs::prelude::*;
 use std::cmp::{min, max};
 use super::{Player, State, Map, Viewshed, RunState, CombatStats, WantsToMelee,
-    Position, Item, gamelog::GameLog, WantsToPickupItem, TileType, Monster};
+    Position, Item, gamelog::GameLog, WantsToPickupItem, TileType, Monster,
+    HungerClock, HungerState, EntityMoved, Door, BlocksTile, BlocksVisibility,
+    Renderable};
 
 pub fn try_move_player (delta_x: i32, delta_y: i32, ecs: &mut World) {
     let players = ecs.write_storage::<Player>();
@@ -12,6 +14,11 @@ pub fn try_move_player (delta_x: i32, delta_y: i32, ecs: &mut World) {
     let entities = ecs.entities();
     let mut wants_to_melee = ecs.write_storage::<WantsToMelee>();
     let map = ecs.fetch::<Map>();
+    let mut entity_moved = ecs.write_storage::<EntityMoved>();
+    let mut doors = ecs.write_storage::<Door>();
+    let mut blocks_movement = ecs.write_storage::<BlocksTile>();
+    let mut blocks_visibility = ecs.write_storage::<BlocksVisibility>();
+    let mut renderables = ecs.write_storage::<Renderable>();
 
     for (ent, _player, pos, viewshed) in (&entities, &players, &mut positions, &mut viewsheds).join() {
         if pos.x+delta_x < 1 || pos.x+delta_x > map.width-1 || pos.y+delta_y < 1 || pos.y+delta_y > map.height-1 { return; }
@@ -20,16 +27,26 @@ pub fn try_move_player (delta_x: i32, delta_y: i32, ecs: &mut World) {
         for potential_target in map.tile_content[dest_idx].iter() {
             let target = combat_stats.get(*potential_target);
             if let Some(_target) = target {
-                    /* Attack it */
-                    wants_to_melee.insert(ent, WantsToMelee { target: *potential_target }).expect("Add target failed");
-                    return; /* Prevent move after attacking */
+                /* Attack it */
+                wants_to_melee.insert(ent, WantsToMelee { target: *potential_target }).expect("Add target failed");
+                return; /* Prevent move after attacking */
+            }
+            let door = doors.get_mut(*potential_target);
+            if let Some(door) = door {
+                door.open = true;
+                blocks_visibility.remove(*potential_target);
+                blocks_movement.remove(*potential_target);
+                let glyph = renderables.get_mut(*potential_target).unwrap();
+                glyph.glyph = rltk::to_cp437('/');
+                viewshed.dirty = true; 
             }
         };
 
         if !map.blocked[dest_idx] {
-            pos.x = min(79, max(0, pos.x + delta_x));
-            pos.y = min(49, max(0, pos.y + delta_y));
+            pos.x = min(map.width-1, max(0, pos.x + delta_x));
+            pos.y = min(map.height-1, max(0, pos.y + delta_y));
             viewshed.dirty = true;
+            entity_moved.insert(ent, EntityMoved{}).expect("Unable to insert marker");
 
             let mut ppos = ecs.write_resource::<Point>();
             ppos.x = pos.x;
@@ -81,8 +98,8 @@ fn skip_turn (ecs: &mut World) -> RunState {
     let viewshed_components = ecs.read_storage::<Viewshed>();
     let monsters = ecs.read_storage::<Monster>();
     let worldmap_resource = ecs.fetch::<Map>();
-
     let mut can_heal = true;
+
     let viewshed = viewshed_components.get(*player_entity).unwrap();
     for tile in viewshed.visible_tiles.iter() {
         let idx = worldmap_resource.xy_idx(tile.x, tile.y);
@@ -94,6 +111,16 @@ fn skip_turn (ecs: &mut World) -> RunState {
             }
         };
     };
+
+    let hunger_clock = ecs.read_storage::<HungerClock>();
+    let hc = hunger_clock.get(*player_entity);
+    if let Some(hc) = hc {
+        match hc.state {
+            HungerState::Hungry => { can_heal = false },
+            HungerState::Starving => { can_heal = false },
+            _ => {},
+        }
+    }
 
     if can_heal {
         let mut health_components = ecs.write_storage::<CombatStats>();
