@@ -5,7 +5,7 @@ use rltk::{Point, Rltk, RGB};
 const SHOW_BOUNDARIES: bool = true;
 
 fn wall_glyph (map: &Map, x:i32, y:i32) -> rltk::FontCharType {
-    if x < 1 || x > map.width-2 || y < 1 || y > map.height-2 as i32 { return 32; }
+    if x < 1 || x > map.width-2 || y < 1 || y > map.height-2 as i32 { return 35; }
     let mut mask: u8 = 0;
 
     if is_revealed_and_wall(map, x, y-1) { mask += 1; }
@@ -59,6 +59,11 @@ fn get_tile_glyph (idx: usize, map: &Map) -> (rltk::FontCharType, RGB, RGB) {
             fg = RGB::from_f32(0., 1.0, 1.0);
         },
     }
+    if map.bloodstains.contains(&idx) { bg = RGB::from_f32(0.75, 0., 0.); }
+    if !map.visible_tiles[idx] {
+        fg = fg.to_greyscale();
+        bg = RGB::from_f32(0., 0., 0.);
+    }
 
     (glyph, fg, bg)
 }
@@ -101,13 +106,13 @@ pub fn render_debug_map (map: &Map, ctx: &mut Rltk) {
                 if map.revealed_tiles[idx] {
                     let (glyph, fg, bg) = get_tile_glyph(idx, &*map);
                     ctx.set(x, y, fg, bg, glyph);
-                } else if SHOW_BOUNDARIES {
-                    ctx.set(x, y, RGB::named(rltk::GRAY), RGB::named(rltk::BLACK), rltk::to_cp437('·'));
                 }
-                x += 1;
+            } else if SHOW_BOUNDARIES {
+                ctx.set(x, y, RGB::named(rltk::GRAY), RGB::named(rltk::BLACK), rltk::to_cp437('·'));
             }
-            y += 1;
+            x += 1;
         };
+        y += 1;
     };
 }
 
@@ -127,13 +132,13 @@ pub fn render_camera (ecs: &World, ctx: &mut Rltk) {
                 if map.revealed_tiles[idx] {
                     let (glyph, fg, bg) = get_tile_glyph(idx, &*map);
                     ctx.set(x, y, fg, bg, glyph);
-                } else if SHOW_BOUNDARIES {
-                    ctx.set(x, y, RGB::named(rltk::GRAY), RGB::named(rltk::BLACK), rltk::to_cp437('·'));
                 }
-                x += 1;
+            } else if SHOW_BOUNDARIES {
+                ctx.set(x, y, RGB::named(rltk::GRAY), RGB::named(rltk::BLACK), rltk::to_cp437('·'));
             }
-            y += 1;
+            x += 1;
         };
+        y += 1;
     };
 
     let positions = ecs.read_storage::<Position>();
