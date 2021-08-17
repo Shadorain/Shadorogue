@@ -38,8 +38,13 @@ macro_rules! deserialize_individually {
 pub fn save_game (ecs: &mut World) {
     /* Create Helper */
     let mapcopy = ecs.get_mut::<super::map::Map>().unwrap().clone();
+    let dungeon_master = ecs.get_mut::<super::map::MasterDungeonMap>().unwrap().clone();
     let savehelper = ecs.create_entity()
         .with(SerializationHelper { map: mapcopy })
+        .marked::<SimpleMarker<SerializeMe>>()
+        .build();
+    let savehelper2 = ecs.create_entity()
+        .with(DMSerializationHelper { map: dungeon_master })
         .marked::<SimpleMarker<SerializeMe>>()
         .build();
 
@@ -49,17 +54,22 @@ pub fn save_game (ecs: &mut World) {
         let writer = File::create("./savegame.json").unwrap();
         let mut serializer = serde_json::Serializer::new(writer);
         serialize_individually!(ecs, serializer, data, Position, Renderable, Player,
-            Viewshed, Monster, Name, BlocksTile, CombatStats, SufferDamage,
-            WantsToMelee, Item, Consumable, Ranged, InflictsDamage, AreaOfEffect,
-            Confusion, ProvidesHealing, InBackpack, WantsToPickupItem, WantsToUseItem,
-            WantsToDropItem, SerializationHelper, Equippable, Equipped,
-            MeleePowerBonus, DefenseBonus, WantsToRemoveEquipment, ParticleLifetime,
-            HungerClock, ProvidesFood, MagicMapper, Hidden, EntryTrigger, EntityMoved,
-            SingleActivation, BlocksVisibility, Door
+            Viewshed, Name, BlocksTile, SufferDamage, Pools, Skills, WantsToMelee,
+            Item, Consumable, Ranged, InflictsDamage, AreaOfEffect, Confusion,
+            ProvidesHealing, InBackpack, WantsToPickupItem, WantsToUseItem,
+            WantsToDropItem, SerializationHelper, Equippable, Equipped, NaturalAttackDefense,
+            MeleeWeapon, Wearable, WantsToRemoveEquipment, ParticleLifetime,
+            LootTable, HungerClock, ProvidesFood, MagicMapper, Hidden, EntryTrigger,
+            EntityMoved, SingleActivation, BlocksVisibility, Door, Quips, Attributes,
+            OtherLevelPosition, DMSerializationHelper, LightSource, Initiative,
+            MyTurn, Faction, WantsToApproach, WantsToFlee, MoveMode, Chasing,
+            EquipmentChanged, Vendor, TownPortal, TeleportTo, ApplyMove, ApplyTeleport,
+            MagicItem
         );
     }
     /* Cleanup */
     ecs.delete_entity(savehelper).expect("Crash on cleanup");
+    ecs.delete_entity(savehelper2).expect("Crash on cleanup");
 }
 
 pub fn does_save_exist () -> bool {
@@ -84,27 +94,38 @@ pub fn load_game (ecs: &mut World) {
         let mut d = (&mut ecs.entities(), &mut ecs.write_storage::<SimpleMarker<SerializeMe>>(),
             &mut ecs.write_resource::<SimpleMarkerAllocator<SerializeMe>>());
         deserialize_individually!(ecs, de, d, Position, Renderable, Player,
-            Viewshed, Monster, Name, BlocksTile, CombatStats, SufferDamage,
-            WantsToMelee, Item, Consumable, Ranged, InflictsDamage, AreaOfEffect,
-            Confusion, ProvidesHealing, InBackpack, WantsToPickupItem, WantsToUseItem,
-            WantsToDropItem, SerializationHelper, Equippable, Equipped, 
-            MeleePowerBonus, DefenseBonus, WantsToRemoveEquipment,ParticleLifetime,
-            HungerClock, ProvidesFood, MagicMapper, EntryTrigger, EntityMoved,
-            SingleActivation, BlocksVisibility, Door
+            Viewshed, Name, BlocksTile, SufferDamage, Pools, Skills, WantsToMelee,
+            Item, Consumable, Ranged, InflictsDamage, AreaOfEffect, Confusion,
+            ProvidesHealing, InBackpack, WantsToPickupItem, WantsToUseItem,
+            WantsToDropItem, SerializationHelper, Equippable, Equipped, NaturalAttackDefense,
+            MeleeWeapon, Wearable, WantsToRemoveEquipment, ParticleLifetime,
+            LootTable, HungerClock, ProvidesFood, MagicMapper, Hidden, EntryTrigger,
+            EntityMoved, SingleActivation, BlocksVisibility, Door, Quips, Attributes,
+            OtherLevelPosition, DMSerializationHelper, LightSource, Initiative,
+            MyTurn, Faction, WantsToApproach, WantsToFlee, MoveMode, Chasing,
+            EquipmentChanged, Vendor, TownPortal, TeleportTo, ApplyMove, ApplyTeleport,
+            MagicItem
         );
     }
 
-    let mut deleteme : Option<Entity> = None;
+    let mut deleteme: Option<Entity> = None;
+    let mut deleteme2: Option<Entity> = None;
     {
         let entities = ecs.entities();
         let helper = ecs.read_storage::<SerializationHelper>();
+        let helper2 = ecs.read_storage::<DMSerializationHelper>();
         let player = ecs.read_storage::<Player>();
         let position = ecs.read_storage::<Position>();
         for (e,h) in (&entities, &helper).join() {
             let mut worldmap = ecs.write_resource::<super::map::Map>();
             *worldmap = h.map.clone();
-            worldmap.tile_content = vec![Vec::new(); (worldmap.height*worldmap.width) as usize];
+            crate::spatial::set_size((worldmap.height*worldmap.width) as usize);
             deleteme = Some(e);
+        };
+        for (e,h) in (&entities, &helper2).join() {
+            let mut dungeonmaster = ecs.write_resource::<super::map::MasterDungeonMap>();
+            *dungeonmaster = h.map.clone();
+            deleteme2 = Some(e);
         };
         for (e,_p,pos) in (&entities, &player, &position).join() {
             let mut ppos = ecs.write_resource::<rltk::Point>();
@@ -114,6 +135,7 @@ pub fn load_game (ecs: &mut World) {
         };
     }
     ecs.delete_entity(deleteme.unwrap()).expect("Unable to delete helper");
+    ecs.delete_entity(deleteme2.unwrap()).expect("Unable to delete helper");
 }
 
 pub fn delete_save () {

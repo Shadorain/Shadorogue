@@ -1,8 +1,9 @@
 use specs::prelude::*;
-use super::{Map, Name, gamelog::GameLog, WantsToUseItem, ProvidesHealing, CombatStats,
+use super::{Map, Name, gamelog::GameLog, WantsToUseItem, ProvidesHealing, Pools,
     WantsToPickupItem, WantsToDropItem, Position, InBackpack, Consumable, SufferDamage,
     InflictsDamage, AreaOfEffect, Confusion, Equippable, Equipped, WantsToRemoveEquipment,
-    ParticleBuilder, ProvidesFood, HungerState, HungerClock, MagicMapper, RunState
+    ParticleBuilder, ProvidesFood, HungerState, HungerClock, MagicMapper, RunState,
+    EquipmentChanged, TownPortal
 };
 
 pub struct ItemCollectionSystem {}
@@ -14,15 +15,18 @@ impl<'a> System<'a> for ItemCollectionSystem {
                         WriteStorage<'a, WantsToPickupItem>,
                         WriteStorage<'a, Position>,
                         ReadStorage<'a, Name>,
-                        WriteStorage<'a, InBackpack>
+                        WriteStorage<'a, InBackpack>,
+                        WriteStorage<'a, EquipmentChanged>,
                       );
 
     fn run(&mut self, data : Self::SystemData) {
-        let (player_entity, mut gamelog, mut wants_pickup, mut positions, names, mut backpack) = data;
+        let (player_entity, mut gamelog, mut wants_pickup, mut positions, names,
+            mut backpack, mut dirty) = data;
 
         for pickup in wants_pickup.join() {
             positions.remove(pickup.item);
             backpack.insert(pickup.item, InBackpack { owner: pickup.collected_by }).expect("Unable to insert backpack entry");
+            dirty.insert(pickup.collected_by, EquipmentChanged{}).expect("Unable to insert");
 
             if pickup.collected_by == *player_entity {
                 gamelog.entries.push(format!("You pick up the {}.", names.get(pickup.item).unwrap().name));
@@ -46,7 +50,7 @@ impl<'a> System<'a> for ItemUseSystem {
         ReadStorage<'a, Consumable>,
         ReadStorage<'a, ProvidesHealing>,
         ReadStorage<'a, InflictsDamage>,
-        WriteStorage<'a, CombatStats>,
+        WriteStorage<'a, Pools>,
         WriteStorage<'a, SufferDamage>,
         ReadStorage<'a, AreaOfEffect>,
         WriteStorage<'a, Confusion>,
@@ -59,16 +63,19 @@ impl<'a> System<'a> for ItemUseSystem {
         WriteStorage<'a, HungerClock>,
         ReadStorage<'a, MagicMapper>,
         WriteExpect<'a, RunState>,
-        );
+        WriteStorage<'a, EquipmentChanged>,
+        ReadStorage<'a, TownPortal>,
+    );
 
-    fn run (&mut self, data : Self::SystemData) {
+    fn run (&mut self, data: Self::SystemData) {
         let (player_entity, mut gamelog, map, entities, mut wants_use, names,
             consumables, healing, inflict_damage, mut combat_stats,
             mut suffer_damage, aoe, mut confused, equippable, mut equipped,
             mut backpack, mut particle_builder, positions, provides_food,
-            mut hunger_clock, magic_mapper, mut runstate) = data;
+            mut hunger_clock, magic_mapper, mut runstate, mut dirty, town_portal) = data;
         
         for (ent,useitem) in (&entities, &wants_use).join() {
+            dirty.insert(ent, EquipmentChanged{}).expect("Unable to insert");
             let mut used_item = true;
 
             /* Targeting */
@@ -81,9 +88,7 @@ impl<'a> System<'a> for ItemUseSystem {
                         None => {
                             /* Single target in tile */
                             let idx = map.xy_idx(target.x, target.y);
-                            for mob in map.tile_content[idx].iter() {
-                                targets.push(*mob);
-                            };
+                            crate::spatial::for_each_tile_content(idx, |mob| targets.push(mob));
                         },
                         Some(area_effect) => {
                             /* AOE */
@@ -91,9 +96,7 @@ impl<'a> System<'a> for ItemUseSystem {
                             blast_tiles.retain(|p| p.x > 0 && p.x < map.width-1 && p.y > 0 && p.y < map.height-1);
                             for tile_idx in blast_tiles.iter() {
                                 let idx = map.xy_idx(tile_idx.x, tile_idx.y);
-                                for mob in map.tile_content[idx].iter() {
-                                    targets.push(*mob);
-                                };
+                                crate::spatial::for_each_tile_content(idx, |mob| targets.push(mob));
                                 particle_builder.request(tile_idx.x, tile_idx.y, rltk::RGB::named(rltk::ORANGE), rltk::RGB::named(rltk::BLACK), rltk::to_cp437('░'), 200.0);
                             };
                         },
@@ -141,6 +144,16 @@ impl<'a> System<'a> for ItemUseSystem {
                     *runstate = RunState::MagicMapReveal { row: 0 };
                 },
             }
+            /* Town portal */
+            if let Some(_townportal) = town_portal.get(useitem.item) {
+                if map.depth == 1 {
+                    gamelog.entries.push("You are already in town, so the scroll does nothing.".to_string());
+                } else {
+                    used_item = true;
+                    gamelog.entries.push("You are teleported back to town!".to_string());
+                    *runstate = RunState::TownPortal;
+                }
+            }
             /* Food!!! */
             let item_edible = provides_food.get(useitem.item);
             match item_edible {
@@ -164,7 +177,7 @@ impl<'a> System<'a> for ItemUseSystem {
                     for target in targets.iter() {
                         let stats = combat_stats.get_mut(*target);
                         if let Some(stats) = stats {
-                            stats.hp = i32::min(stats.max_hp, stats.hp+healer.heal_amount);
+                            stats.hit_points.current = i32::min(stats.hit_points.max, stats.hit_points.current+healer.heal_amount);
                             if ent == *player_entity {
                                 gamelog.entries.push(format!("You drank the {}, healing {} hp.",
                                         names.get(useitem.item).unwrap().name, healer.heal_amount));
@@ -185,7 +198,7 @@ impl<'a> System<'a> for ItemUseSystem {
                 Some(damage) => {
                     used_item = false;
                     for mob in targets.iter() {
-                        SufferDamage::new_dmg(&mut suffer_damage, *mob, damage.damage);
+                        SufferDamage::new_dmg(&mut suffer_damage, *mob, damage.damage, true);
                         if ent == *player_entity {
                             let item_name = names.get(useitem.item).unwrap();
                             let mob_name = names.get(*mob).unwrap();
@@ -255,10 +268,12 @@ impl<'a> System<'a> for ItemDropSystem {
         ReadStorage<'a, Name>,
         WriteStorage<'a, Position>,
         WriteStorage<'a, InBackpack>,
+        WriteStorage<'a, EquipmentChanged>,
         );
 
     fn run (&mut self, data : Self::SystemData) {
-        let (player_entity, mut gamelog, entities, mut wants_drop, names, mut positions, mut backpack) = data;
+        let (player_entity, mut gamelog, entities, mut wants_drop, names, mut positions,
+            mut backpack, mut dirty) = data;
         
         for (ent,to_drop) in (&entities, &wants_drop).join() {
             let mut dropper_pos : Position = Position { x:0, y:0 };
@@ -269,6 +284,7 @@ impl<'a> System<'a> for ItemDropSystem {
             }
             positions.insert(to_drop.item, Position { x:dropper_pos.x, y:dropper_pos.y }).expect("Unable to insert position");
             backpack.remove(to_drop.item);
+            dirty.insert(ent, EquipmentChanged{}).expect("Unable to insert");
 
             if ent == *player_entity {
                 gamelog.entries.push(format!("You dropped the {}.", names.get(to_drop.item).unwrap().name));

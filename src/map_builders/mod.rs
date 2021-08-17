@@ -73,6 +73,7 @@ mod room_based_stairs;
 mod room_based_spawner;
 mod room_based_starting_position;
 mod area_starting_points;
+mod area_ending_point;
 mod distant_exit;
 mod cull_unreachable;
 mod voronoi_spawning;
@@ -85,11 +86,22 @@ use room_based_starting_position::*;
 #[allow(unused_imports)]
 use area_starting_points::*;
 #[allow(unused_imports)]
+use area_ending_point::*;
+#[allow(unused_imports)]
 use distant_exit::*;
 #[allow(unused_imports)]
 use cull_unreachable::*;
 #[allow(unused_imports)]
 use voronoi_spawning::*;
+
+mod town;
+use town::town_builder;
+mod forest;
+use forest::forest_builder;
+mod yellowbrickroad;
+use yellowbrickroad::*;
+mod limestone_cavern;
+use limestone_cavern::*;
 
 pub trait InitialMapBuilder {
     fn build_map (&mut self, rng: &mut rltk::RandomNumberGenerator, build_data: &mut BuilderMap);
@@ -129,13 +141,13 @@ impl BuilderMap {
 }
 
 impl BuilderChain {
-    pub fn new (new_depth:i32, width:i32, height:i32) -> BuilderChain {
+    pub fn new <S: ToString>(new_depth:i32, width:i32, height:i32, name: S) -> BuilderChain {
         BuilderChain {
             starter: None,
             builders: Vec::new(),
             build_data: BuilderMap {
                 spawn_list: Vec::new(),
-                map: Map::new(new_depth, width, height),
+                map: Map::new(new_depth, width, height, name),
                 starting_position: None,
                 rooms: None,
                 corridors: None,
@@ -292,15 +304,27 @@ fn random_shape_builder (rng: &mut rltk::RandomNumberGenerator, builder: &mut Bu
     builder.with(DistantExit::new());
 }
 
+pub fn level_builder (new_depth:i32, rng: &mut rltk::RandomNumberGenerator, width:i32, height:i32) -> BuilderChain {
+    rltk::console::log(format!("Depth: {}", new_depth));
+    match new_depth {
+        1 => town_builder(new_depth, rng, width, height),
+        2 => forest_builder(new_depth, rng, width, height),
+        3 => limestone_cavern_builder(new_depth, rng, width, height),
+        4 => limestone_deep_cavern_builder(new_depth, rng, width, height),
+        5 => limestone_transition_builder(new_depth, rng, width, height),
+        _ => random_builder(new_depth, rng, width, height),
+    }
+}
+
 pub fn random_builder (new_depth:i32, rng: &mut rltk::RandomNumberGenerator, width:i32, height:i32) -> BuilderChain {
-    let mut builder = BuilderChain::new(new_depth, width, height);
+    let mut builder = BuilderChain::new(new_depth, width, height, "New Map");
     let type_roll = rng.roll_dice(1, 2);
     match type_roll {
         1 => random_room_builder(rng, &mut builder),
         _ => random_shape_builder(rng, &mut builder),
     }
 
-    if rng.roll_dice(1, 3) == 1 {
+    if rng.roll_dice(1, 5) == 1 {
         builder.with(WaveformCollapseBuilder::new());
         let (start_x, start_y) = random_start_position(rng);
         builder.with(AreaStartingPosition::new(start_x, start_y));

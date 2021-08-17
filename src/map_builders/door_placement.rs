@@ -62,7 +62,7 @@ impl DoorPlacement {
             let tiles = build_data.map.tiles.clone();
             for (i,tile) in tiles.iter().enumerate() {
                 if *tile == TileType::Floor && self.door_possible(build_data, i)
-                    && rng.roll_dice(1, 3) == 1
+                    && rng.roll_dice(1, 5) == 1
                 {
                     build_data.spawn_list.push((i, "Door".to_string()));
                 }
